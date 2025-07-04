@@ -206,3 +206,49 @@ This project is licensed under the MIT License. See the `LICENSE` file for detai
 
 ## Contact
 For questions or support, please contact [Prabeer](https://github.com/prabeer).
+
+## Integration with VS Code and GitHub Copilot
+
+### Adding Tasks to VS Code
+To integrate the MCP Shell Server with VS Code, you can add tasks to the `tasks.json` file in your workspace. Below is an example configuration:
+
+1. Open the Command Palette in VS Code (`Ctrl+Shift+P` or `Cmd+Shift+P` on macOS) and select `Tasks: Configure Task`.
+2. Choose `Create tasks.json file from template` if prompted.
+3. Add the following tasks to the `tasks.json` file:
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "MCP Shell: List Directory",
+      "type": "shell",
+      "command": "echo",
+      "args": [
+        "'{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"list_dir\",\"arguments\":{\"path\":\".\"}}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "MCP Shell: Run Command",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "read -p 'Enter command: ' cmd && echo \"{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"id\\\":1,\\\"method\\\":\\\"tools/call\\\",\\\"params\\\":{\\\"name\\\":\\\"run_shell\\\",\\\"arguments\\\":{\\\"command\\\":\\\"$cmd\\\"}}}}\" | python3 safe_shell_mcp.py --saferoot /path/to/safe/root"
+      ],
+      "group": "build"
+    }
+  ]
+}
+```
+
+### Using GitHub Copilot
+GitHub Copilot can assist in writing and editing code for the MCP Shell Server. To enable Copilot:
+
+1. Install the GitHub Copilot extension from the VS Code Marketplace.
+2. Open the MCP Shell Server project in VS Code.
+3. Start typing commands or code snippets, and Copilot will provide intelligent suggestions.
+4. Use Copilot to generate JSON-RPC commands, debug scripts, or write documentation.
+
+For more details, refer to the [GitHub Copilot documentation](https://docs.github.com/en/copilot).

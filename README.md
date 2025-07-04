@@ -243,6 +243,54 @@ To integrate the MCP Shell Server with VS Code, you can add tasks to the `tasks.
 }
 ```
 
+### Adding MCP Shell Server to VS Code Settings
+
+To configure the MCP Shell Server in VS Code settings, you can add the following snippet to your `settings.json` file:
+
+```json
+"mcp": {
+  "servers": {
+    "shell_server": {
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "<path_to_safe_shell_mcp.py>",
+        "--saferoot",
+        "<path_to_safe_root>",
+        "--debug"
+      ]
+    }
+  }
+}
+```
+
+Replace `<path_to_safe_shell_mcp.py>` with the absolute path to the `safe_shell_mcp.py` file and `<path_to_safe_root>` with the directory you want to restrict access to.
+
+### Adding MCP Shell Server to VS Code Workspace
+
+To configure the MCP Shell Server for your VS Code workspace, you can add the following snippet to the `.vscode/settings.json` file:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "shell_server": {
+        "type": "stdio",
+        "command": "python3",
+        "args": [
+          "<path_to_safe_shell_mcp.py>",
+          "--saferoot",
+          "<path_to_safe_root>",
+          "--debug"
+        ]
+      }
+    }
+  }
+}
+```
+
+Replace `<path_to_safe_shell_mcp.py>` with the absolute path to the `safe_shell_mcp.py` file and `<path_to_safe_root>` with the directory you want to restrict access to.
+
 ### Using GitHub Copilot
 GitHub Copilot can assist in writing and editing code for the MCP Shell Server. To enable Copilot:
 

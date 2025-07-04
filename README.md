@@ -151,6 +151,48 @@ python3 safe_shell_mcp.py --saferoot /path/to/safe/root --debug
    echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"version"}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
    ```
 
+## Background and Streaming Tasks
+
+### Background Tasks
+Background tasks are designed for long-running operations that do not require immediate user interaction. These tasks run asynchronously, allowing users to continue other operations while monitoring their progress.
+
+**Key Features:**
+- Asynchronous execution for long-running commands.
+- Status tracking with `task_status`.
+- Output retrieval with `task_output`.
+- Automatic cleanup of completed tasks after 1 hour.
+- Graceful termination with `task_terminate`.
+
+**Recommended Use Cases:**
+- Training machine learning models.
+- Large-scale builds or deployments.
+- Data processing tasks.
+
+**Default Timeout:**
+- Background tasks have a timeout of **3600 seconds (1 hour)**.
+
+For more details, refer to the [STREAMING_FEATURES.md](STREAMING_FEATURES.md) file.
+
+### Streaming Tasks
+Streaming tasks provide real-time feedback for commands that generate continuous output. This mode is ideal for monitoring progress and receiving updates during execution.
+
+**Key Features:**
+- Real-time output streaming.
+- Progress updates every 10 lines or on important events.
+- Timeout protection to prevent hanging commands.
+- Start and completion status messages.
+- Elapsed time tracking.
+
+**Recommended Use Cases:**
+- Build processes.
+- Package installations.
+- Continuous monitoring tasks.
+
+**Default Timeout:**
+- Streaming tasks have a timeout of **300 seconds (5 minutes)**.
+
+For more details, refer to the [STREAMING_FEATURES.md](STREAMING_FEATURES.md) file.
+
 ## Compatibility
 - **Designed for VS Code and GitHub Copilot**: Optimized for seamless integration with modern code editors, enabling intelligent code suggestions and streamlined workflows.
 - **Supports RFC JSON Format**: Ensures structured and standardized data handling for tools and commands, making it compatible with modern APIs and automation systems.

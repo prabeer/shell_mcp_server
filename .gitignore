@@ -1,3 +1,6 @@
+# This .gitignore is tailored for VS Code, GitHub Copilot, and other editors.
+# Supports RFC JSON format for structured data handling.
+
 # Ignore virtual environment
 .venv/
 

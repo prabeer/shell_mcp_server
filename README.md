@@ -68,6 +68,94 @@ python3 safe_shell_mcp.py --saferoot /path/to/safe/root --debug
    echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"file_search","arguments":{"pattern":"*.py","root":"."}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
    ```
 
+## Supported Commands
+
+### Core Commands
+1. **Run Shell Command**:
+   Execute shell commands with options for streaming output or background execution.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_shell","arguments":{"command":"ls -la","stream":true}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+2. **Run Raw Command**:
+   Execute shell commands without additional processing.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_raw","arguments":{"command":"echo Hello World"}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+3. **List Directory**:
+   List the contents of a directory.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_dir","arguments":{"path":"."}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+4. **Search Files**:
+   Search for files matching a pattern.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"file_search","arguments":{"pattern":"*.py","root":"."}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+5. **Print Working Directory**:
+   Display the current working directory.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"print_workdir"}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+6. **Grep File**:
+   Search for a pattern in a file.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"grep_file","arguments":{"pattern":"def","filepath":"safe_shell_mcp.py"}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+7. **Cat File**:
+   Display the contents of a file.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"cat_file","arguments":{"filepath":"README.md"}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+8. **Sed Search**:
+   Perform a search using `sed`.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"sed_search","arguments":{"script":"s/old/new/g","filepath":"README.md"}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+### Background Task Management
+1. **Task Status**:
+   Get the status of a background task.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"task_status","arguments":{"task_id":"<task_id>"}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+2. **Task Output**:
+   Retrieve the output of a background task.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"task_output","arguments":{"task_id":"<task_id>","max_lines":10}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+3. **Task List**:
+   List all background tasks.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"task_list"}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+4. **Task Terminate**:
+   Terminate a background task.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"task_terminate","arguments":{"task_id":"<task_id>"}}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+### Version Information
+1. **Version**:
+   Display server version and build information.
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"version"}}' | python3 safe_shell_mcp.py --saferoot /path/to/safe/root
+   ```
+
+## Compatibility
+- **Designed for VS Code and GitHub Copilot**: Optimized for seamless integration with modern code editors, enabling intelligent code suggestions and streamlined workflows.
+- **Supports RFC JSON Format**: Ensures structured and standardized data handling for tools and commands, making it compatible with modern APIs and automation systems.
+- **Cross-Editor Compatibility**: Works seamlessly with other popular editors like PyCharm, Sublime Text, and Atom, ensuring flexibility for developers.
+
 ## Contributing
 Contributions are welcome! Please fork the repository and submit a pull request with your changes.
 

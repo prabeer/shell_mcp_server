@@ -1,0 +1,41 @@
+# Ignore virtual environment
+.venv/
+
+# Ignore VS Code settings
+.vscode/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore test files
+*.test.py
+
+# Ignore logs
+*.log
+
+# Ignore temporary files
+*.tmp
+*.swp
+*.swo
+
+# Ignore node_modules (if applicable)
+node_modules/
+
+# Ignore coverage reports
+coverage/
+*.coverage
+
+# Ignore build artifacts
+build/
+dist/
+*.egg-info/
+
+# Ignore IDE-specific files
+.idea/
+*.iml
+
+# Ignore system files
+.DS_Store
+Thumbs.db

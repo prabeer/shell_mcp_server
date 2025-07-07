@@ -64,8 +64,7 @@ class BackgroundTask:
         try:
             _debug_log(f"Executing background command: {self.command}")
             self.process = subprocess.Popen(
-                self.command,
-                shell=True,
+                ["/bin/bash", "-c", self.command],
                 cwd=str(SAFE_ROOT),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -124,11 +123,30 @@ class BackgroundTask:
         return lines
         
     def terminate(self):
-        """Terminate the running task"""
+        """Terminate the running task with escalating force"""
         if self.process and self.process.poll() is None:
-            self.process.terminate()
-            self.status = "terminated"
-            self.end_time = time.time()
+            try:
+                _debug_log(f"Sending SIGTERM to task {self.task_id}")
+                self.process.terminate()
+                
+                # Wait up to 5 seconds for graceful termination
+                try:
+                    self.process.wait(timeout=5)
+                    _debug_log(f"Task {self.task_id} terminated gracefully")
+                except subprocess.TimeoutExpired:
+                    # Force kill if process doesn't respond to SIGTERM
+                    _debug_log(f"Task {self.task_id} didn't respond to SIGTERM, sending SIGKILL")
+                    self.process.kill()
+                    self.process.wait()
+                    _debug_log(f"Task {self.task_id} force-killed")
+                
+                self.status = "terminated"
+                self.end_time = time.time()
+                
+            except Exception as e:
+                _debug_log(f"Error terminating task {self.task_id}: {e}")
+                self.status = "terminated"  # Mark as terminated even if there was an error
+                self.end_time = time.time()
 
 def _create_background_task(command):
     """Create and register a new background task"""
@@ -171,9 +189,9 @@ def _stream_command_output(command, request_id, timeout=STREAMING_TIMEOUT):
         # Send initial progress
         _progress(request_id, f"🚀 Starting command: {command}")
         
+        # Use bash explicitly for better shell feature support (brace expansion, etc.)
         process = subprocess.Popen(
-            command,
-            shell=True,
+            ["/bin/bash", "-c", command],
             cwd=str(SAFE_ROOT),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -185,16 +203,15 @@ def _stream_command_output(command, request_id, timeout=STREAMING_TIMEOUT):
         output_lines = []
         start_time = time.time()
         
-        # Stream output line by line
+        # Stream output line by line with real-time progress updates
         for line in iter(process.stdout.readline, ''):
             if line:
                 line = line.rstrip()
                 output_lines.append(line)
                 
-                # Send progress update every few lines or for important lines
-                if len(output_lines) % 10 == 0 or any(keyword in line.lower() for keyword in ['error', 'warning', 'complete', 'done', 'finished']):
-                    elapsed = time.time() - start_time
-                    _progress(request_id, f"📊 Line {len(output_lines)}: {line[:100]}{'...' if len(line) > 100 else ''} [%.1fs]" % elapsed)
+                # Send progress update for EVERY line in streaming mode
+                elapsed = time.time() - start_time
+                _progress(request_id, f"📊 Line {len(output_lines)}: {line[:100]}{'...' if len(line) > 100 else ''} [%.1fs]" % elapsed)
                 
                 # Check timeout
                 if time.time() - start_time > timeout:

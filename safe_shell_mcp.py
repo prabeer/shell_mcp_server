@@ -336,10 +336,9 @@ def _execute_shell(command):
     _debug_log(f"Working directory: {_shell_cwd()}")
     
     try:
-        # Use subprocess.run for complete output collection
+        # Use explicit bash execution for consistency with streaming/background tasks
         result = subprocess.run(
-            command, 
-            shell=True, 
+            ["/bin/bash", "-c", command], 
             cwd=_shell_cwd(),
             capture_output=True, 
             text=True, 

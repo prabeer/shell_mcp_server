@@ -347,15 +347,24 @@ class BackgroundTask:
         }
         
     def get_output(self, max_lines=None):
-        """Get accumulated output from the task"""
+        """Get accumulated output from the task with timeout protection"""
         lines = []
         try:
-            while not self.output_queue.empty():
-                lines.append(self.output_queue.get_nowait())
-                if max_lines and len(lines) >= max_lines:
+            # Limit the number of iterations to prevent infinite loops
+            max_iterations = max_lines if max_lines else 1000  # Default limit of 1000 lines
+            iterations = 0
+            
+            while not self.output_queue.empty() and iterations < max_iterations:
+                try:
+                    line = self.output_queue.get_nowait()
+                    lines.append(line)
+                    iterations += 1
+                    if max_lines and len(lines) >= max_lines:
+                        break
+                except queue.Empty:
                     break
-        except queue.Empty:
-            pass
+        except Exception as e:
+            _debug_log(f"Error getting output from task {self.task_id}: {e}")
         return lines
         
     def terminate(self):
@@ -390,28 +399,60 @@ def _create_background_task(command):
     return task_id
 
 def _get_background_task(task_id):
-    """Get background task by ID"""
-    with TASK_LOCK:
-        return BACKGROUND_TASKS.get(task_id)
+    """Get background task by ID with timeout protection"""
+    try:
+        # Use timeout to prevent hanging if lock is held too long
+        if TASK_LOCK.acquire(timeout=5):  # 5 second timeout
+            try:
+                return BACKGROUND_TASKS.get(task_id)
+            finally:
+                TASK_LOCK.release()
+        else:
+            _debug_log(f"Warning: Could not acquire task lock within timeout for task {task_id}")
+            return None
+    except Exception as e:
+        _debug_log(f"Error getting background task {task_id}: {e}")
+        return None
 
 def _cleanup_completed_tasks():
-    """Clean up old completed tasks from memory and disk"""
+    """Clean up old completed tasks from memory and disk and handle stuck tasks"""
     with TASK_LOCK:
         current_time = time.time()
         to_remove = []
+        stuck_tasks = []
         
         for task_id, task in BACKGROUND_TASKS.items():
             if task.status in ["completed", "failed", "terminated", "lost"] and task.end_time:
                 # Remove tasks older than 1 hour
                 if current_time - task.end_time > 3600:
                     to_remove.append(task_id)
+            elif task.status == "running" and task.start_time:
+                # Check for tasks that have been running too long (more than 1 hour)
+                if current_time - task.start_time > 3600:
+                    _debug_log(f"Found long-running task {task_id} that may be stuck ({current_time - task.start_time:.1f}s)")
+                    stuck_tasks.append(task_id)
                     
+        # Clean up old completed tasks
         for task_id in to_remove:
             del BACKGROUND_TASKS[task_id]
             _debug_log(f"Cleaned up old task {task_id}")
+        
+        # Handle stuck tasks
+        for task_id in stuck_tasks:
+            task = BACKGROUND_TASKS.get(task_id)
+            if task:
+                _debug_log(f"Terminating long-running task {task_id}")
+                try:
+                    task.terminate()
+                    task.status = "terminated"
+                    task.end_time = current_time
+                except Exception as e:
+                    _debug_log(f"Error terminating stuck task {task_id}: {e}")
+                    task.status = "failed"
+                    task.end_time = current_time
     
     # Also clean up disk storage if we removed any tasks
-    if to_remove:
+    if to_remove or stuck_tasks:
         try:
             _save_tasks_to_disk()
             _cleanup_task_storage()
@@ -453,8 +494,13 @@ def _stream_command_output(command, request_id, timeout=STREAMING_TIMEOUT):
         max_consecutive_timeouts = 3
         error_count = 0
         max_errors = 10
+        last_progress_update = start_time
+        progress_interval = 2  # Update progress every 2 seconds
         
         _debug_log(f"Process started with PID: {process.pid}")
+        
+        # Add initial streaming indicator
+        streaming_output = [f"🔄 STREAMING: {command}", "=" * 50, ""]
         
         # Stream output line by line with enhanced timeout protection
         while process.poll() is None:
@@ -465,7 +511,7 @@ def _stream_command_output(command, request_id, timeout=STREAMING_TIMEOUT):
                 _debug_log(f"Global timeout reached ({effective_timeout}s)")
                 _progress(request_id, f"⏱️ Command timeout after {effective_timeout}s - terminating")
                 _terminate_process_group(process)
-                output_lines.append(f"⏱️ Command terminated after {effective_timeout}s timeout")
+                streaming_output.append(f"⏱️ Command terminated after {effective_timeout}s timeout")
                 break
             
             # Try to read a line with timeout
@@ -475,14 +521,20 @@ def _stream_command_output(command, request_id, timeout=STREAMING_TIMEOUT):
                 if line:  # Non-empty line
                     line = line.rstrip()
                     output_lines.append(line)
+                    streaming_output.append(line)
                     last_output_time = current_time
                     consecutive_timeouts = 0
                     error_count = 0  # Reset error count on successful read
                     
-                    # Send progress update with throttling
+                    # Send progress update with throttling for real-time streaming feel
                     elapsed = current_time - start_time
-                    if len(output_lines) % 10 == 1 or elapsed > 10:  # Throttle progress updates
-                        _progress(request_id, f"📊 Line {len(output_lines)}: {line[:100]}{'...' if len(line) > 100 else ''} [%.1fs]" % elapsed)
+                    if current_time - last_progress_update >= progress_interval or len(output_lines) % 5 == 1:
+                        # Escape % characters in the line to prevent format string issues
+                        safe_line = line[:80].replace('%', '%%') if line else ''
+                        ellipsis = '...' if len(line) > 80 else ''
+                        progress_msg = f"📊 Streaming... {len(output_lines)} lines | Latest: {safe_line}{ellipsis} | {elapsed:.1f}s"
+                        _progress(request_id, progress_msg)
+                        last_progress_update = current_time
                 # Continue for empty lines
             else:
                 # Timeout on readline
@@ -495,12 +547,18 @@ def _stream_command_output(command, request_id, timeout=STREAMING_TIMEOUT):
                     _debug_log(f"Too many errors ({error_count}), terminating process")
                     _progress(request_id, f"💥 Too many errors ({error_count}) - terminating process")
                     _terminate_process_group(process)
-                    output_lines.append(f"💥 Process terminated due to excessive errors ({error_count})")
+                    streaming_output.append(f"💥 Process terminated due to excessive errors ({error_count})")
                     break
                 
                 # Check if we've been stuck too long without output
                 if current_time - last_output_time > READLINE_TIMEOUT * 2:
                     _debug_log(f"No output for {current_time - last_output_time:.1f}s, checking if process is responsive")
+                    
+                    # Send periodic update even when no output
+                    if current_time - last_progress_update >= progress_interval:
+                        elapsed = current_time - start_time
+                        _progress(request_id, f"⏳ Waiting for output... {elapsed:.1f}s (last output: {current_time - last_output_time:.1f}s ago)")
+                        last_progress_update = current_time
                     
                     # Check if process is still alive but maybe stuck
                     if consecutive_timeouts >= max_consecutive_timeouts:
@@ -514,7 +572,7 @@ def _stream_command_output(command, request_id, timeout=STREAMING_TIMEOUT):
                             time.sleep(ERROR_RECOVERY_TIMEOUT)
                         except (OSError, ProcessLookupError) as e:
                             _debug_log(f"Process appears to be dead: {e}")
-                            output_lines.append(f"🛑 Process appears to have died: {e}")
+                            streaming_output.append(f"🛑 Process appears to have died: {e}")
                             break
                         except Exception as e:
                             _debug_log(f"Error sending recovery signal: {e}")
@@ -524,7 +582,7 @@ def _stream_command_output(command, request_id, timeout=STREAMING_TIMEOUT):
                             _debug_log("Process not responding after recovery attempt, terminating")
                             _progress(request_id, f"🛑 Process unresponsive - terminating")
                             _terminate_process_group(process)
-                            output_lines.append("🛑 Process terminated - appeared to be hanging")
+                            streaming_output.append("🛑 Process terminated - appeared to be hanging")
                             break
         
         # Enhanced process completion handling
@@ -549,32 +607,53 @@ def _stream_command_output(command, request_id, timeout=STREAMING_TIMEOUT):
                         break
                     if remaining.strip():
                         output_lines.append(remaining.strip())
+                        streaming_output.append(remaining.strip())
             except Exception as e:
                 _debug_log(f"Error reading remaining output: {e}")
         
         exit_code = process.returncode
         elapsed = time.time() - start_time
         
+        # Add completion status to streaming output
+        streaming_output.append("")
+        streaming_output.append("=" * 50)
+        
         # Enhanced final status reporting
         if exit_code == 0:
-            _progress(request_id, f"✅ Command completed successfully in %.1fs" % elapsed)
+            final_status = f"✅ Command completed successfully in {elapsed:.1f}s"
+            _progress(request_id, final_status)
+            streaming_output.append(final_status)
         elif exit_code is None:
-            _progress(request_id, f"🛑 Command was terminated after %.1fs" % elapsed)
-            output_lines.append(f"[Process terminated]")
+            final_status = f"🛑 Command was terminated after {elapsed:.1f}s"
+            _progress(request_id, final_status)
+            streaming_output.append(final_status)
+            streaming_output.append(f"[Process terminated]")
         elif exit_code == -9:
-            _progress(request_id, f"💀 Command was killed (SIGKILL) after %.1fs" % elapsed)
-            output_lines.append(f"[Process killed with SIGKILL]")
+            final_status = f"💀 Command was killed (SIGKILL) after {elapsed:.1f}s"
+            _progress(request_id, final_status)
+            streaming_output.append(final_status)
+            streaming_output.append(f"[Process killed with SIGKILL]")
         elif exit_code == -15:
-            _progress(request_id, f"🛑 Command was terminated (SIGTERM) after %.1fs" % elapsed)
-            output_lines.append(f"[Process terminated with SIGTERM]")
+            final_status = f"🛑 Command was terminated (SIGTERM) after {elapsed:.1f}s"
+            _progress(request_id, final_status)
+            streaming_output.append(final_status)
+            streaming_output.append(f"[Process terminated with SIGTERM]")
         elif exit_code < 0:
-            _progress(request_id, f"💥 Command terminated by signal {abs(exit_code)} after %.1fs" % elapsed)
-            output_lines.append(f"[Process terminated by signal {abs(exit_code)}]")
+            final_status = f"💥 Command terminated by signal {abs(exit_code)} after {elapsed:.1f}s"
+            _progress(request_id, final_status)
+            streaming_output.append(final_status)
+            streaming_output.append(f"[Process terminated by signal {abs(exit_code)}]")
         else:
-            _progress(request_id, f"❌ Command failed with exit code {exit_code} after %.1fs" % elapsed)
-            output_lines.append(f"[Exit code: {exit_code}]")
+            final_status = f"❌ Command failed with exit code {exit_code} after {elapsed:.1f}s"
+            _progress(request_id, final_status)
+            streaming_output.append(final_status)
+            streaming_output.append(f"[Exit code: {exit_code}]")
         
-        return "\n".join(output_lines)
+        # Add summary
+        streaming_output.append(f"📊 Total output lines: {len(output_lines)}")
+        streaming_output.append(f"⏱️ Execution time: {elapsed:.1f}s")
+        
+        return "\n".join(streaming_output)
         
     except subprocess.CalledProcessError as e:
         _debug_log(f"Streaming command subprocess error: {e}")
@@ -589,7 +668,8 @@ def _stream_command_output(command, request_id, timeout=STREAMING_TIMEOUT):
         return f"❌ OS error: {e} - Command may not exist or insufficient permissions"
     except Exception as e:
         _debug_log(f"Streaming command unexpected error: {e}")
-        _progress(request_id, f"💥 Unexpected error: {str(e)}")
+        error_str = str(e).replace('%', '%%')  # Escape % to prevent format issues
+        _progress(request_id, f"💥 Unexpected error: {error_str}")
         return f"❌ Unexpected error during streaming execution: {e}"
     finally:
         # Ensure process is cleaned up
@@ -1267,96 +1347,131 @@ def _handle_tools_call(rid, prm):
         _error(rid, -32000, "Unhandled exception", f"Unexpected error in tool '{name}': {str(e)}")
 
 def _handle_task_status(params):
-    """Handle task status request"""
+    """Handle task status request with timeout protection"""
     task_id = params["task_id"]
     _debug_log(f"Getting task status for: {task_id}")
     
-    task = _get_background_task(task_id)
-    if not task:
-        return f"❌ Task '{task_id}' not found"
-    
-    status = task.get_status()
-    
-    # Format status nicely
-    result = f"📋 Task Status: {task_id}\n"
-    result += f"   Command: {status['command']}\n"
-    result += f"   Status: {status['status']}\n"
-    
-    if status['start_time']:
-        start_time = datetime.datetime.fromtimestamp(status['start_time']).strftime("%Y-%m-%d %H:%M:%S")
-        result += f"   Started: {start_time}\n"
-    
-    if status['end_time']:
-        end_time = datetime.datetime.fromtimestamp(status['end_time']).strftime("%Y-%m-%d %H:%M:%S")
-        result += f"   Finished: {end_time}\n"
-    
-    if status['elapsed_seconds']:
-        result += f"   Duration: {status['elapsed_seconds']:.1f}s\n"
-    
-    if status['exit_code'] is not None:
-        result += f"   Exit Code: {status['exit_code']}\n"
-    
-    return result
+    try:
+        task = _get_background_task(task_id)
+        if not task:
+            return f"❌ Task '{task_id}' not found"
+        
+        # Get status with timeout protection
+        try:
+            status = task.get_status()
+        except Exception as e:
+            _debug_log(f"Error getting status for task {task_id}: {e}")
+            return f"❌ Error getting status for task '{task_id}': {e}"
+        
+        # Format status nicely
+        result = f"📋 Task Status: {task_id}\n"
+        result += f"   Command: {status['command']}\n"
+        result += f"   Status: {status['status']}\n"
+        
+        if status['start_time']:
+            start_time = datetime.datetime.fromtimestamp(status['start_time']).strftime("%Y-%m-%d %H:%M:%S")
+            result += f"   Started: {start_time}\n"
+        
+        if status['end_time']:
+            end_time = datetime.datetime.fromtimestamp(status['end_time']).strftime("%Y-%m-%d %H:%M:%S")
+            result += f"   Finished: {end_time}\n"
+        
+        if status['elapsed_seconds']:
+            result += f"   Duration: {status['elapsed_seconds']:.1f}s\n"
+        
+        if status['exit_code'] is not None:
+            result += f"   Exit Code: {status['exit_code']}\n"
+        
+        return result
+        
+    except Exception as e:
+        _debug_log(f"Unexpected error in task_status for {task_id}: {e}")
+        return f"❌ Unexpected error getting status for task '{task_id}': {e}"
 
 def _handle_task_output(params):
-    """Handle task output request"""
+    """Handle task output request with timeout protection"""
     task_id = params["task_id"]
     max_lines = params.get("max_lines")
     _debug_log(f"Getting task output for: {task_id} (max_lines={max_lines})")
     
-    task = _get_background_task(task_id)
-    if not task:
-        return f"❌ Task '{task_id}' not found"
-    
-    output_lines = task.get_output(max_lines)
-    
-    if not output_lines:
-        return f"📄 No output available for task {task_id} (status: {task.status})"
-    
-    result = f"📄 Output for task {task_id} ({len(output_lines)} lines):\n"
-    result += "=" * 50 + "\n"
-    result += "\n".join(output_lines)
-    
-    if max_lines and len(output_lines) >= max_lines:
-        result += f"\n... (truncated at {max_lines} lines)"
-    
-    return result
+    try:
+        task = _get_background_task(task_id)
+        if not task:
+            return f"❌ Task '{task_id}' not found"
+        
+        try:
+            output_lines = task.get_output(max_lines)
+        except Exception as e:
+            _debug_log(f"Error getting output for task {task_id}: {e}")
+            return f"❌ Error getting output for task '{task_id}': {e}"
+        
+        if not output_lines:
+            return f"📄 No output available for task {task_id} (status: {task.status})"
+        
+        result = f"📄 Output for task {task_id} ({len(output_lines)} lines):\n"
+        result += "=" * 50 + "\n"
+        result += "\n".join(output_lines)
+        
+        if max_lines and len(output_lines) >= max_lines:
+            result += f"\n... (truncated at {max_lines} lines)"
+        
+        return result
+        
+    except Exception as e:
+        _debug_log(f"Unexpected error in task_output for {task_id}: {e}")
+        return f"❌ Unexpected error getting output for task '{task_id}': {e}"
 
 def _handle_task_list(params):
-    """Handle task list request"""
+    """Handle task list request with timeout protection"""
     _debug_log("Listing all background tasks")
     
-    with TASK_LOCK:
-        if not BACKGROUND_TASKS:
-            return "📝 No background tasks found"
-        
-        # Count tasks by status
-        status_counts = {}
-        for task in BACKGROUND_TASKS.values():
-            status_counts[task.status] = status_counts.get(task.status, 0) + 1
-        
-        result = f"📝 Background Tasks ({len(BACKGROUND_TASKS)} total):\n"
-        
-        # Show status summary
-        if len(status_counts) > 1:
-            status_summary = ", ".join([f"{status}: {count}" for status, count in status_counts.items()])
-            result += f"   Status Summary: {status_summary}\n"
-        
-        result += "=" * 50 + "\n"
-        
-        for task_id, task in BACKGROUND_TASKS.items():
-            status = task.get_status()
-            elapsed = status['elapsed_seconds']
-            elapsed_str = f"{elapsed:.1f}s" if elapsed else "0s"
+    try:
+        # Use timeout to prevent hanging if lock is held too long
+        if TASK_LOCK.acquire(timeout=5):  # 5 second timeout
+            try:
+                if not BACKGROUND_TASKS:
+                    return "📝 No background tasks found"
+                
+                # Count tasks by status
+                status_counts = {}
+                for task in BACKGROUND_TASKS.values():
+                    status_counts[task.status] = status_counts.get(task.status, 0) + 1
+                
+                result = f"📝 Background Tasks ({len(BACKGROUND_TASKS)} total):\n"
+                
+                # Show status summary
+                if len(status_counts) > 1:
+                    status_summary = ", ".join([f"{status}: {count}" for status, count in status_counts.items()])
+                    result += f"   Status Summary: {status_summary}\n"
+                
+                result += "=" * 50 + "\n"
+                
+                for task_id, task in BACKGROUND_TASKS.items():
+                    try:
+                        status = task.get_status()
+                        elapsed = status['elapsed_seconds']
+                        elapsed_str = f"{elapsed:.1f}s" if elapsed else "0s"
+                        
+                        # Add special indicator for restored tasks
+                        status_indicator = status['status']
+                        if status['status'] == 'lost':
+                            status_indicator = "lost (server restarted)"
+                        
+                        result += f"• {task_id}: {status_indicator} ({elapsed_str}) - {status['command'][:60]}{'...' if len(status['command']) > 60 else ''}\n"
+                    except Exception as e:
+                        _debug_log(f"Error getting status for task {task_id} in list: {e}")
+                        result += f"• {task_id}: error getting status - {e}\n"
+                
+                return result
+            finally:
+                TASK_LOCK.release()
+        else:
+            _debug_log("Warning: Could not acquire task lock within timeout for task list")
+            return "❌ Could not get task list - system busy"
             
-            # Add special indicator for restored tasks
-            status_indicator = status['status']
-            if status['status'] == 'lost':
-                status_indicator = "lost (server restarted)"
-            
-            result += f"• {task_id}: {status_indicator} ({elapsed_str}) - {status['command'][:60]}{'...' if len(status['command']) > 60 else ''}\n"
-    
-    return result
+    except Exception as e:
+        _debug_log(f"Unexpected error in task_list: {e}")
+        return f"❌ Unexpected error getting task list: {e}"
 
 def _handle_task_terminate(params):
     """Handle task termination request"""

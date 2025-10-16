@@ -1,0 +1,15 @@
+{
+  "24f9917a": {
+    "task_id": "24f9917a",
+    "command": "echo 'Task started'; sleep 5; echo 'Task completed'",
+    "timeout": 1800,
+    "status": "lost",
+    "start_time": 1760639462.878412,
+    "end_time": 1760639463.0324383,
+    "exit_code": null,
+    "output_lines": [
+      "[Task was running when server restarted - marked as lost]"
+    ],
+    "created_at": 1760639500.059879
+  }
+}
